@@ -23,6 +23,7 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/filters/filter.h>
 #include <pcl/point_types.h>
+#include <pcl/console/time.h>
 #include <velodyne_pointcloud/point_types.h>
 
 
@@ -30,6 +31,7 @@
 #include <visualization_msgs/Marker.h>
 #include <visualization_msgs/MarkerArray.h>
 #endif
+#include <rviz_visual_tools/rviz_visual_tools.h>
 
 #include <pcl/common/common.h>
 #include <pcl/common/centroid.h>
@@ -120,6 +122,8 @@ private:
     // For display markers only, however, currently the orientation is bad.
     ros::Publisher marker_array_pub_;
 #endif
+    rviz_visual_tools::RvizVisualToolsPtr visual_tools;
+
     // Dummy object to occupy idx 0.
     std::forward_list<SLRPointXYZIRL*> dummy_;
 
@@ -181,6 +185,7 @@ ScanLineRun::ScanLineRun():node_handle_("~"){
     ROS_INFO("Publishing jsk markers at: %s", "cluster_ma");
     marker_array_pub_ = node_handle_.advertise<visualization_msgs::MarkerArray>("cluster_ma", 10);
 #endif
+    visual_tools.reset(new rviz_visual_tools::RvizVisualTools("velodyne", "pointcloud_clusters_marker"));
 
     
 #ifdef INTEREST_ONLY
@@ -477,6 +482,10 @@ int tab=0;
     and publish cluster points `slr`.
 */
 void ScanLineRun::velodyne_callback_(const sensor_msgs::PointCloud2ConstPtr& in_cloud_msg){
+    pcl::console::TicToc tt;
+
+    tt.tic();
+
     // Msg to pointcloud
     pcl::PointCloud<SLRPointXYZIRL> laserCloudIn;
     pcl::fromROSMsg(*in_cloud_msg, laserCloudIn);
@@ -631,11 +640,13 @@ void ScanLineRun::velodyne_callback_(const sensor_msgs::PointCloud2ConstPtr& in_
         }
     }
     ROS_INFO("Total cluster: %d", cnt);
+    std::cout << "[" << ros::this_node::getName() << "] ";
+    tt.toc_print();
     // Publish Cluster Points
     if(laserCloud->points.size()>0){
         sensor_msgs::PointCloud2 cluster_msg;
         pcl::toROSMsg(*laserCloud, cluster_msg);
-        cluster_msg.header.frame_id = "/velodyne";
+        cluster_msg.header.frame_id = in_cloud_msg->header.frame_id;
         cluster_points_pub_.publish(cluster_msg);
     }
 #ifdef IO
@@ -647,6 +658,51 @@ void ScanLineRun::velodyne_callback_(const sensor_msgs::PointCloud2ConstPtr& in_
     }
     tab++;
 #endif
+
+    // Re-organize pointcloud clusters for cuboid marker publish
+    std::vector<pcl::PointCloud<SLRPointXYZIRL> > pointcloud_clusters(cnt + 1);
+    for (auto &point: laserCloud->points)
+    {
+        pointcloud_clusters[point.label].points.push_back(point);
+    }
+
+    // Publish pointcloud clusters marker
+    visual_tools->deleteAllMarkers();
+    visual_tools->setBaseFrame(in_cloud_msg->header.frame_id);
+    for (size_t i = 0; i < pointcloud_clusters.size(); i++)
+    {
+        if (pointcloud_clusters[i].empty())
+        {
+            continue;
+        }
+
+        Eigen::VectorXd point_x(pointcloud_clusters[i].size());
+        Eigen::VectorXd point_y(pointcloud_clusters[i].size());
+        Eigen::VectorXd point_z(pointcloud_clusters[i].size());
+        for (size_t point_i = 0; point_i < pointcloud_clusters[i].points.size(); point_i++)
+        {
+            point_x[point_i] = pointcloud_clusters[i].points[point_i].x;
+            point_y[point_i] = pointcloud_clusters[i].points[point_i].y;
+            point_z[point_i] = pointcloud_clusters[i].points[point_i].z;
+        }
+
+        Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+        pose.translation().x() = point_x.mean();
+        pose.translation().y() = point_y.mean();
+        pose.translation().z() = point_z.mean();
+
+        double depth = point_x.maxCoeff() - point_x.minCoeff();
+        double width = point_y.maxCoeff() - point_y.minCoeff();
+        double height = point_z.maxCoeff() - point_z.minCoeff();
+
+        // if (depth > 3.0f || width > 3.0f)
+        // {
+        //   continue;
+        // }
+        visual_tools->publishWireframeCuboid(pose, depth, width, height, rviz_visual_tools::RAND);
+    }
+    std::cout << "pointcloud cluster size: " << cnt << std::endl;
+    visual_tools->trigger();
 }
 
 int main(int argc, char **argv)

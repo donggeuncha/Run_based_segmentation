@@ -7,6 +7,7 @@ find_package(catkin REQUIRED COMPONENTS
   pcl_ros
   pcl_conversions
   velodyne_pointcloud
+  rviz_visual_tools
 )
 
 catkin_package(CATKIN_DEPENDS
