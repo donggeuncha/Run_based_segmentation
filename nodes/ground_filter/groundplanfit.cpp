@@ -251,8 +251,8 @@ void GroundPlaneFit::velodyne_callback_(const sensor_msgs::PointCloud2ConstPtr& 
         point.label = 0u;// 0 means uncluster
         g_all_pc->points.push_back(point);
     }
-    //std::vector<int> indices;
-    //pcl::removeNaNFromPointCloud(laserCloudIn, laserCloudIn,indices);
+    std::vector<int> indices;
+    pcl::removeNaNFromPointCloud(laserCloudIn, laserCloudIn,indices);
     // 2.Sort on Z-axis value.
     sort(laserCloudIn.points.begin(),laserCloudIn.end(),point_cmp);
     // 3.Error point removal
